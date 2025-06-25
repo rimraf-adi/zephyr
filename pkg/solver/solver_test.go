@@ -132,4 +132,47 @@ func TestPartialSolutionGetAssignmentByPackage(t *testing.T) {
 	if notFound != nil {
 		t.Error("Expected not to find assignment for package 'bar'")
 	}
+}
+
+func TestSolver_AddIncompatibilityAndGetters(t *testing.T) {
+	s := NewSolver("foo", "1.0.0")
+	inc := Incompatibility{Terms: []Term{{Package: "foo", Version: VersionConstraint{Specific: "1.0.0"}}}}
+	s.AddIncompatibility(inc)
+	incs := s.GetIncompatibilities()
+	if len(incs) == 0 || incs[0].Terms[0].Package != "foo" {
+		t.Error("AddIncompatibility or GetIncompatibilities failed")
+	}
+}
+
+func TestSolver_Solve_Success(t *testing.T) {
+	s := NewSolver("foo", "1.0.0")
+	// Add a simple incompatibility that should not cause conflict
+	inc := Incompatibility{Terms: []Term{{Package: "foo", Version: VersionConstraint{Specific: "1.0.0"}, Negated: false}}}
+	s.AddIncompatibility(inc)
+	_, err := s.Solve()
+	if err != nil {
+		t.Errorf("Solve failed: %v", err)
+	}
+}
+
+func TestSolver_Solve_Conflict(t *testing.T) {
+	s := NewSolver("foo", "1.0.0")
+	// Add a conflict: foo 1.0.0 and not foo 1.0.0
+	inc1 := Incompatibility{Terms: []Term{{Package: "foo", Version: VersionConstraint{Specific: "1.0.0"}, Negated: false}}}
+	inc2 := Incompatibility{Terms: []Term{{Package: "foo", Version: VersionConstraint{Specific: "1.0.0"}, Negated: true}}}
+	s.AddIncompatibility(inc1)
+	s.AddIncompatibility(inc2)
+	_, err := s.Solve()
+	if err == nil {
+		t.Error("Expected conflict error, got nil")
+	}
+}
+
+func TestSolver_ErrorReporting(t *testing.T) {
+	s := NewSolver("foo", "1.0.0")
+	inc := Incompatibility{Terms: []Term{{Package: "foo", Version: VersionConstraint{Specific: "1.0.0"}}}}
+	report := s.GenerateErrorReport(inc)
+	if report == nil || len(report.Lines) == 0 {
+		t.Error("GenerateErrorReport failed")
+	}
 } 

@@ -36,20 +36,16 @@ func (wi *WheelInstaller) InstallWheel(wheelPath, packageName string) error {
 	if err != nil {
 		return fmt.Errorf("failed to parse wheel metadata for '%s': %w. The wheel may be corrupted or missing METADATA.", wheelPath, err)
 	}
-	
-	// Determine installation directory
+	createdPaths := []string{}
 	sitePackages := wi.getSitePackagesPath()
-	
-	// Extract wheel contents
-	if err := wi.extractWheel(reader, sitePackages, metadata); err != nil {
+	if err := wi.extractWheel(reader, sitePackages, metadata, &createdPaths); err != nil {
+		wi.rollbackCreatedPaths(createdPaths)
 		return fmt.Errorf("failed to extract wheel '%s' to site-packages: %w. Check permissions and disk space.", wheelPath, err)
 	}
-	
-	// Install metadata
-	if err := wi.installMetadata(sitePackages, metadata); err != nil {
+	if err := wi.installMetadata(sitePackages, metadata, &createdPaths); err != nil {
+		wi.rollbackCreatedPaths(createdPaths)
 		return fmt.Errorf("failed to install metadata for '%s': %w. The wheel may be malformed.", wheelPath, err)
 	}
-	
 	return nil
 }
 
@@ -99,89 +95,95 @@ func (wi *WheelInstaller) parseWheelMetadata(reader *zip.ReadCloser) (*WheelMeta
 	return metadata, nil
 }
 
+// Helper for atomic install: track created dirs
+func trackMkdirAll(path string, perm os.FileMode, createdPaths *[]string) error {
+	err := os.MkdirAll(path, perm)
+	if err == nil {
+		*createdPaths = append(*createdPaths, path)
+	}
+	return err
+}
+
+// Helper for atomic install: track created files
+func trackCreateFile(path string, createdPaths *[]string) (*os.File, error) {
+	f, err := os.Create(path)
+	if err == nil {
+		*createdPaths = append(*createdPaths, path)
+	}
+	return f, err
+}
+
 // extractWheel extracts wheel contents to site-packages
-func (wi *WheelInstaller) extractWheel(reader *zip.ReadCloser, sitePackages string, metadata *WheelMetadata) error {
+func (wi *WheelInstaller) extractWheel(reader *zip.ReadCloser, sitePackages string, metadata *WheelMetadata, createdPaths *[]string) error {
 	for _, file := range reader.File {
-		// Skip metadata files (they're handled separately)
 		if strings.Contains(file.Name, ".dist-info/") {
 			continue
 		}
-		
-		// Determine target path
 		targetPath := filepath.Join(sitePackages, file.Name)
-		
-		// Create directory if needed
 		if file.FileInfo().IsDir() {
-			if err := os.MkdirAll(targetPath, 0755); err != nil {
+			if err := trackMkdirAll(targetPath, 0755, createdPaths); err != nil {
 				return fmt.Errorf("failed to create directory '%s': %w. Check permissions.", targetPath, err)
 			}
 			continue
 		}
-		
-		// Create parent directory
 		parentDir := filepath.Dir(targetPath)
-		if err := os.MkdirAll(parentDir, 0755); err != nil {
+		if err := trackMkdirAll(parentDir, 0755, createdPaths); err != nil {
 			return fmt.Errorf("failed to create parent directory '%s': %w. Check permissions.", parentDir, err)
 		}
-		
-		// Extract file
-		if err := wi.extractFile(file, targetPath); err != nil {
+		if err := wi.extractFileTracked(file, targetPath, createdPaths); err != nil {
 			return fmt.Errorf("failed to extract file '%s' to '%s': %w. Check disk space and permissions.", file.Name, targetPath, err)
 		}
 	}
-	
 	return nil
 }
 
 // extractFile extracts a single file from the wheel
-func (wi *WheelInstaller) extractFile(file *zip.File, targetPath string) error {
+func (wi *WheelInstaller) extractFileTracked(file *zip.File, targetPath string, createdPaths *[]string) error {
 	rc, err := file.Open()
 	if err != nil {
 		return fmt.Errorf("failed to open file in wheel: %w. The wheel may be corrupted.", err)
 	}
 	defer rc.Close()
-	
-	targetFile, err := os.Create(targetPath)
+	targetFile, err := trackCreateFile(targetPath, createdPaths)
 	if err != nil {
 		return fmt.Errorf("failed to create file '%s': %w. Check permissions and disk space.", targetPath, err)
 	}
 	defer targetFile.Close()
-	
 	_, err = io.Copy(targetFile, rc)
 	if err != nil {
 		return fmt.Errorf("failed to copy data to '%s': %w. Check disk space.", targetPath, err)
 	}
-	
 	return nil
 }
 
 // installMetadata installs wheel metadata
-func (wi *WheelInstaller) installMetadata(sitePackages string, metadata *WheelMetadata) error {
-	// Create dist-info directory
+func (wi *WheelInstaller) installMetadata(sitePackages string, metadata *WheelMetadata, createdPaths *[]string) error {
 	distInfoDir := filepath.Join(sitePackages, metadata.DistInfoName)
-	if err := os.MkdirAll(distInfoDir, 0755); err != nil {
+	if err := trackMkdirAll(distInfoDir, 0755, createdPaths); err != nil {
 		return fmt.Errorf("failed to create dist-info directory '%s': %w. Check permissions.", distInfoDir, err)
 	}
-	
-	// Write METADATA file
 	metadataPath := filepath.Join(distInfoDir, "METADATA")
-	if err := os.WriteFile(metadataPath, []byte(metadata.RawMetadata), 0644); err != nil {
+	f, err := trackCreateFile(metadataPath, createdPaths)
+	if err != nil {
 		return fmt.Errorf("failed to write METADATA file '%s': %w. Check permissions and disk space.", metadataPath, err)
 	}
-	
-	// Write WHEEL file
+	f.Write([]byte(metadata.RawMetadata))
+	f.Close()
 	wheelPath := filepath.Join(distInfoDir, "WHEEL")
-	if err := os.WriteFile(wheelPath, []byte(metadata.WheelInfo), 0644); err != nil {
+	f, err = trackCreateFile(wheelPath, createdPaths)
+	if err != nil {
 		return fmt.Errorf("failed to write WHEEL file '%s': %w. Check permissions and disk space.", wheelPath, err)
 	}
-	
-	// Write RECORD file (simplified)
+	f.Write([]byte(metadata.WheelInfo))
+	f.Close()
 	recordPath := filepath.Join(distInfoDir, "RECORD")
 	recordContent := wi.generateRecordFile(sitePackages, metadata)
-	if err := os.WriteFile(recordPath, []byte(recordContent), 0644); err != nil {
+	f, err = trackCreateFile(recordPath, createdPaths)
+	if err != nil {
 		return fmt.Errorf("failed to write RECORD file '%s': %w. Check permissions and disk space.", recordPath, err)
 	}
-	
+	f.Write([]byte(recordContent))
+	f.Close()
 	return nil
 }
 
@@ -261,6 +263,13 @@ func (wm *WheelMetadata) parseMetadata() {
 	}
 }
 
+// Helper to rollback created files/dirs
+func (wi *WheelInstaller) rollbackCreatedPaths(createdPaths []string) {
+	for i := len(createdPaths) - 1; i >= 0; i-- {
+		os.RemoveAll(createdPaths[i])
+	}
+}
+
 // InstallWheelFromPyPI downloads and installs a wheel from PyPI with atomic rollback and hash verification
 func (wi *WheelInstaller) InstallWheelFromPyPI(packageName, version string) error {
 	client := pypi.NewPyPIClient()
@@ -268,72 +277,54 @@ func (wi *WheelInstaller) InstallWheelFromPyPI(packageName, version string) erro
 	if err != nil {
 		return fmt.Errorf("failed to find wheel: %w", err)
 	}
-
-	// Download wheel
 	reader, err := client.DownloadRelease(*release)
 	if err != nil {
 		return fmt.Errorf("failed to download wheel: %w", err)
 	}
 	defer reader.Close()
-
-	// Create temporary file
 	tempFile, err := os.CreateTemp("", "wheel-*.whl")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %w", err)
 	}
 	defer os.Remove(tempFile.Name())
 	defer tempFile.Close()
-
-	// Write downloaded content to temp file and compute SHA256
 	hasher := sha256.New()
 	multiWriter := io.MultiWriter(tempFile, hasher)
 	if _, err := io.Copy(multiWriter, reader); err != nil {
 		return fmt.Errorf("failed to write temp file: %w", err)
 	}
-
-	// Verify SHA256 hash if available
 	if release.Digests.SHA256 != "" {
 		actualHash := hex.EncodeToString(hasher.Sum(nil))
 		if !strings.EqualFold(actualHash, release.Digests.SHA256) {
 			return fmt.Errorf("SHA256 hash mismatch for %s: expected %s, got %s", packageName, release.Digests.SHA256, actualHash)
 		}
 	}
-
-	// Atomic install: track created files/dirs
 	createdPaths := []string{}
-	rollback := func() {
-		for i := len(createdPaths) - 1; i >= 0; i-- {
-			os.RemoveAll(createdPaths[i])
-		}
-	}
-
-	// Wrap InstallWheel to track created files
-	origMkdirAll := os.MkdirAll
-	os.MkdirAll = func(path string, perm os.FileMode) error {
-		err := origMkdirAll(path, perm)
-		if err == nil {
-			createdPaths = append(createdPaths, path)
-		}
-		return err
-	}
-	origCreate := os.Create
-	os.Create = func(path string) (*os.File, error) {
-		f, err := origCreate(path)
-		if err == nil {
-			createdPaths = append(createdPaths, path)
-		}
-		return f, err
-	}
-	defer func() {
-		os.MkdirAll = origMkdirAll
-		os.Create = origCreate
-	}()
-
-	err = wi.InstallWheel(tempFile.Name(), packageName)
+	err = wi.InstallWheelTracked(tempFile.Name(), packageName, &createdPaths)
 	if err != nil {
-		rollback()
+		wi.rollbackCreatedPaths(createdPaths)
 		return fmt.Errorf("atomic install failed, rolled back: %w", err)
 	}
+	return nil
+}
 
+// InstallWheelTracked is like InstallWheel but takes createdPaths for rollback
+func (wi *WheelInstaller) InstallWheelTracked(wheelPath, packageName string, createdPaths *[]string) error {
+	reader, err := zip.OpenReader(wheelPath)
+	if err != nil {
+		return fmt.Errorf("failed to open wheel file '%s': %w. Ensure the file exists and is a valid .whl archive.", wheelPath, err)
+	}
+	defer reader.Close()
+	metadata, err := wi.parseWheelMetadata(reader)
+	if err != nil {
+		return fmt.Errorf("failed to parse wheel metadata for '%s': %w. The wheel may be corrupted or missing METADATA.", wheelPath, err)
+	}
+	sitePackages := wi.getSitePackagesPath()
+	if err := wi.extractWheel(reader, sitePackages, metadata, createdPaths); err != nil {
+		return err
+	}
+	if err := wi.installMetadata(sitePackages, metadata, createdPaths); err != nil {
+		return err
+	}
 	return nil
 } 

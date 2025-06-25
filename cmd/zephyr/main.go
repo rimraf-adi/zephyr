@@ -173,12 +173,6 @@ var installCmd = &cobra.Command{
 		solution, err := s.Solve()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[zephyr] Dependency resolution failed: %v\n", err)
-			if report := s.GenerateErrorReport(s.GetLastConflict()); report != nil {
-				fmt.Fprintln(os.Stderr, "\nDependency conflict details:")
-				for _, line := range report.Lines {
-					fmt.Fprintln(os.Stderr, line)
-				}
-			}
 			os.Exit(1)
 		}
 		fmt.Println("✅ Dependencies resolved successfully!")
@@ -256,12 +250,6 @@ var lockCmd = &cobra.Command{
 		solution, err := s.Solve()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[zephyr] Dependency resolution failed: %v\n", err)
-			if report := s.GenerateErrorReport(s.GetLastConflict()); report != nil {
-				fmt.Fprintln(os.Stderr, "\nDependency conflict details:")
-				for _, line := range report.Lines {
-					fmt.Fprintln(os.Stderr, line)
-				}
-			}
 			os.Exit(1)
 		}
 		lockManager := installer.NewLockfileManager(".")
@@ -429,12 +417,6 @@ var solveCmd = &cobra.Command{
 		solution, err := s.Solve()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[zephyr] Dependency resolution failed: %v\n", err)
-			if report := s.GenerateErrorReport(s.GetLastConflict()); report != nil {
-				fmt.Fprintln(os.Stderr, "\nDependency conflict details:")
-				for _, line := range report.Lines {
-					fmt.Fprintln(os.Stderr, line)
-				}
-			}
 			os.Exit(1)
 		}
 		fmt.Println("✅ Dependencies solved successfully!")
@@ -451,7 +433,7 @@ var demoCmd = &cobra.Command{
 	Use:   "demo",
 	Short: "Run Pubgrub algorithm demo",
 	Run: func(cmd *cobra.Command, args []string) {
-		solver.RunDemo()
+		solver.ExampleConflictResolution()
 	},
 }
 
@@ -459,7 +441,7 @@ var examplesCmd = &cobra.Command{
 	Use:   "examples",
 	Short: "Show Pubgrub algorithm examples",
 	Run: func(cmd *cobra.Command, args []string) {
-		solver.RunExamples()
+		solver.RunAllExamples()
 	},
 }
 
