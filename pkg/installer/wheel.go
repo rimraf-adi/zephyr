@@ -272,18 +272,22 @@ func (wi *WheelInstaller) rollbackCreatedPaths(createdPaths []string) {
 
 // InstallWheelFromPyPI downloads and installs a wheel from PyPI with atomic rollback and hash verification
 func (wi *WheelInstaller) InstallWheelFromPyPI(packageName, version string) error {
+	fmt.Fprintf(os.Stderr, "[zephyr] Resolving wheel for %s %s...\n", packageName, version)
 	client := pypi.NewPyPIClient()
 	release, err := client.FindWheelForVersion(packageName, version, "any")
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "[zephyr] Error: Could not find wheel for %s %s: %v\n", packageName, version, err)
 		return fmt.Errorf("failed to find wheel: %w", err)
 	}
 	reader, err := client.DownloadRelease(*release)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "[zephyr] Error: Could not download wheel for %s %s: %v\n", packageName, version, err)
 		return fmt.Errorf("failed to download wheel: %w", err)
 	}
 	defer reader.Close()
 	tempFile, err := os.CreateTemp("", "wheel-*.whl")
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "[zephyr] Error: Could not create temp file for %s %s: %v\n", packageName, version, err)
 		return fmt.Errorf("failed to create temp file: %w", err)
 	}
 	defer os.Remove(tempFile.Name())
@@ -291,20 +295,27 @@ func (wi *WheelInstaller) InstallWheelFromPyPI(packageName, version string) erro
 	hasher := sha256.New()
 	multiWriter := io.MultiWriter(tempFile, hasher)
 	if _, err := io.Copy(multiWriter, reader); err != nil {
+		fmt.Fprintf(os.Stderr, "[zephyr] Error: Failed to write wheel for %s %s: %v\n", packageName, version, err)
 		return fmt.Errorf("failed to write temp file: %w", err)
 	}
+	fmt.Fprintln(os.Stderr) // Print newline after progress
 	if release.Digests.SHA256 != "" {
+		fmt.Fprintf(os.Stderr, "[zephyr] Verifying SHA256 for %s...\n", release.Filename)
 		actualHash := hex.EncodeToString(hasher.Sum(nil))
 		if !strings.EqualFold(actualHash, release.Digests.SHA256) {
+			fmt.Fprintf(os.Stderr, "[zephyr] Error: SHA256 hash mismatch for %s: expected %s, got %s\n", packageName, release.Digests.SHA256, actualHash)
 			return fmt.Errorf("SHA256 hash mismatch for %s: expected %s, got %s", packageName, release.Digests.SHA256, actualHash)
 		}
 	}
+	fmt.Fprintf(os.Stderr, "[zephyr] Installing wheel for %s %s...\n", packageName, version)
 	createdPaths := []string{}
 	err = wi.InstallWheelTracked(tempFile.Name(), packageName, &createdPaths)
 	if err != nil {
 		wi.rollbackCreatedPaths(createdPaths)
+		fmt.Fprintf(os.Stderr, "[zephyr] Error: Atomic install failed for %s %s, rolled back: %v\n", packageName, version, err)
 		return fmt.Errorf("atomic install failed, rolled back: %w", err)
 	}
+	fmt.Fprintf(os.Stderr, "[zephyr] Successfully installed %s %s\n", packageName, version)
 	return nil
 }
 

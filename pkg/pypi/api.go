@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 
 	"rimraf-adi.com/zephyr/pkg/netutil"
@@ -69,6 +70,30 @@ func NewPyPIClient() *PyPIClient {
 		httpClient: netutil.NewPyPIClient(),
 		baseURL:    netutil.GetPyPIBaseURL(),
 	}
+}
+
+// progressReader wraps an io.Reader and prints download progress to the terminal
+// Prints every 1MB or on completion
+//
+type progressReader struct {
+	reader   io.Reader
+	total    int64
+	read     int64
+	lastMB   int64
+	filename string
+}
+
+func (p *progressReader) Read(buf []byte) (int, error) {
+	n, err := p.reader.Read(buf)
+	if n > 0 {
+		p.read += int64(n)
+		mb := p.read / (1024 * 1024)
+		if mb > p.lastMB || err == io.EOF {
+			fmt.Fprintf(os.Stderr, "\rDownloading %s: %d/%d MB", p.filename, p.read/(1024*1024), p.total/(1024*1024))
+			p.lastMB = mb
+		}
+	}
+	return n, err
 }
 
 // FetchPackageMetadata retrieves package metadata from PyPI
@@ -164,17 +189,23 @@ func (c *PyPIClient) GetReleasesForVersion(packageName, version string) ([]Relea
 
 // DownloadRelease downloads a specific release
 func (c *PyPIClient) DownloadRelease(release Release) (io.ReadCloser, error) {
+	fmt.Fprintf(os.Stderr, "[zephyr] Downloading %s (%.2f MB)...\n", release.Filename, float64(release.Size)/(1024*1024))
 	resp, err := c.httpClient.Get(release.URL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download release: %w", err)
 	}
-	
+
 	if resp.StatusCode != http.StatusOK {
 		resp.Body.Close()
 		return nil, fmt.Errorf("download failed with status %d", resp.StatusCode)
 	}
-	
-	return resp.Body, nil
+
+	pr := &progressReader{reader: resp.Body, total: release.Size, filename: release.Filename}
+	// Wrap in a ReadCloser that closes the underlying resp.Body
+	return struct {
+		io.Reader
+		io.Closer
+	}{Reader: pr, Closer: resp.Body}, nil
 }
 
 // FindWheelForVersion finds the best wheel for a given version and platform

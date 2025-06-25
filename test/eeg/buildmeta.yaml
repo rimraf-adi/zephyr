@@ -1,0 +1,13 @@
+version: 0.1.0
+name: eeg
+description: A Python project created with Zephyr
+author: Your Name
+email: your.email@example.com
+license: MIT
+python:
+    requires: '>=3.8'
+build:
+    backend: setuptools.build_meta
+dependencies: {}
+created: 2025-06-25T12:22:06.787737+05:30
+updated: 2025-06-25T12:22:06.787737+05:30

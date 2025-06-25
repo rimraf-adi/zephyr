@@ -164,6 +164,7 @@ var installCmd = &cobra.Command{
 	Use:   "install",
 	Short: "Install project dependencies",
 	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Println("[zephyr] Resolving dependencies...")
 		buildMeta, err := buildmeta.ParseFromDirectory(".")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[zephyr] Error: Could not load buildmeta.yaml: %v\n", err)
@@ -192,11 +193,23 @@ var installCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "[zephyr] Dependency resolution failed: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Println("✅ Dependencies resolved successfully!")
-		fmt.Println("\nResolved packages:")
-		for _, assignment := range solution.Assignments {
-			if assignment.IsDecision {
-				fmt.Printf("  %s == %s\n", assignment.Term.Package, assignment.Term.Version.String())
+		fmt.Println("[zephyr] Installing dependencies...")
+		venv := installer.NewVirtualEnvironment(".venv")
+		if !venv.Exists() {
+			fmt.Fprintf(os.Stderr, "[zephyr] Error: Virtual environment does not exist at .venv\n")
+			fmt.Fprintln(os.Stderr, "Create it first with: zephyr venv create")
+			os.Exit(1)
+		}
+		for name := range buildMeta.GetDependencies() {
+			assign := solution.GetAssignmentByPackage(name)
+			if assign != nil {
+				ver := assign.Term.Version.String()
+				fmt.Printf("[zephyr] Installing %s %s...\n", name, ver)
+				wheelInstaller := installer.NewWheelInstaller(".venv")
+				if err := wheelInstaller.InstallWheelFromPyPI(name, ver); err != nil {
+					fmt.Fprintf(os.Stderr, "[zephyr] Error: Could not install %s: %v\n", name, err)
+					os.Exit(1)
+				}
 			}
 		}
 		lockManager := installer.NewLockfileManager(".")
@@ -204,7 +217,7 @@ var installCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "[zephyr] Error: Could not create lockfile: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Println("\n📦 Lockfile updated: zephyr.lock")
+		fmt.Println("\n[zephyr] ✅ All dependencies installed and lockfile updated!")
 	},
 }
 
@@ -212,6 +225,7 @@ var syncCmd = &cobra.Command{
 	Use:   "sync",
 	Short: "Install dependencies from lockfile (no resolution)",
 	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Println("[zephyr] Installing dependencies from lockfile...")
 		venvPath := ".venv"
 		venv := installer.NewVirtualEnvironment(venvPath)
 		if !venv.Exists() {
@@ -227,13 +241,13 @@ var syncCmd = &cobra.Command{
 		}
 		wheelInstaller := installer.NewWheelInstaller(venvPath)
 		for name, pkg := range lockfile.Packages {
-			fmt.Printf("Installing %s %s...\n", name, pkg.Version)
+			fmt.Printf("[zephyr] Installing %s %s...\n", name, pkg.Version)
 			if err := wheelInstaller.InstallWheelFromPyPI(name, pkg.Version); err != nil {
 				fmt.Fprintf(os.Stderr, "[zephyr] Error: Could not install %s: %v\n", name, err)
 				os.Exit(1)
 			}
 		}
-		fmt.Println("✅ All packages installed from lockfile!")
+		fmt.Println("[zephyr] ✅ All packages installed from lockfile!")
 	},
 }
 
@@ -317,6 +331,7 @@ var venvInstallCmd = &cobra.Command{
 		if len(args) > 0 {
 			venvPath = args[0]
 		}
+		fmt.Printf("[zephyr] Installing dependencies into %s...\n", venvPath)
 		venv := installer.NewVirtualEnvironment(venvPath)
 		if !venv.Exists() {
 			fmt.Fprintf(os.Stderr, "[zephyr] Error: Virtual environment does not exist at %s\n", venvPath)
@@ -331,13 +346,13 @@ var venvInstallCmd = &cobra.Command{
 		}
 		wheelInstaller := installer.NewWheelInstaller(venvPath)
 		for name, pkg := range lockfile.Packages {
-			fmt.Printf("Installing %s %s...\n", name, pkg.Version)
+			fmt.Printf("[zephyr] Installing %s %s...\n", name, pkg.Version)
 			if err := wheelInstaller.InstallWheelFromPyPI(name, pkg.Version); err != nil {
 				fmt.Fprintf(os.Stderr, "[zephyr] Error: Could not install %s: %v\n", name, err)
 				os.Exit(1)
 			}
 		}
-		fmt.Println("✅ All packages installed successfully!")
+		fmt.Printf("[zephyr] ✅ All packages installed into %s!\n", venvPath)
 	},
 }
 
