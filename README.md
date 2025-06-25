@@ -18,7 +18,7 @@ Zephyr is a fast, reliable Python package manager that uses the Pubgrub dependen
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/zephyr.git
+git clone https://github.com/rimraf-adi/zephyr.git
 cd zephyr
 
 # Build the binary
