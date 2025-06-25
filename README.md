@@ -271,7 +271,7 @@ This ensures compatibility with existing Python tooling and workflows.
 
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/zephyr.git
+git clone https://github.com/rimraf-adi/zephyr.git
 cd zephyr
 
 # Install dependencies
