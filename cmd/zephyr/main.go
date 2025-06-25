@@ -36,6 +36,16 @@ var initCmd = &cobra.Command{
 		if len(args) > 0 {
 			projectName = args[0]
 		}
+		// Create the project directory if it doesn't exist
+		if err := os.MkdirAll(projectName, 0755); err != nil {
+			fmt.Fprintf(os.Stderr, "[zephyr] Error: Could not create project directory: %v\n", err)
+			os.Exit(1)
+		}
+		// Change working directory to the project directory
+		if err := os.Chdir(projectName); err != nil {
+			fmt.Fprintf(os.Stderr, "[zephyr] Error: Could not enter project directory: %v\n", err)
+			os.Exit(1)
+		}
 		buildMeta := buildmeta.NewBuildMeta(projectName, "0.1.0")
 		buildMeta.Description = "A Python project created with Zephyr"
 		buildMeta.Author = "Your Name"
@@ -45,6 +55,13 @@ var initCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "[zephyr] Error: Could not create buildmeta.yaml: %v\n", err)
 			os.Exit(1)
 		}
+		// Create a virtual environment in the project directory
+		venv := installer.NewVirtualEnvironment(".venv")
+		if err := venv.Create(); err != nil {
+			fmt.Fprintf(os.Stderr, "[zephyr] Error: Could not create virtual environment: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("🐍 Created .venv (virtual environment)")
 		fmt.Printf("✅ Initialized Python project '%s'\n", projectName)
 		fmt.Println("📁 Created buildmeta.yaml")
 		fmt.Println("\nNext steps:")
